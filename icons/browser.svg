@@ -1,0 +1,14 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Fond blanc pour plus de contraste -->
+  <rect width="256" height="256" fill="white"/>
+
+  <!-- Cercle central avec sections colorées comme Chrome -->
+  <circle cx="128" cy="128" r="80" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="4"/>
+  <path d="M128 48 A 80 80 0 0 1 208 128 L 128 128 Z" fill="#EA4335"/>  <!-- Rouge -->
+  <path d="M128 48 A 80 80 0 0 0 48 128 L 128 128 Z" fill="#4285F4"/>  <!-- Bleu -->
+  <path d="M48 128 A 80 80 0 0 0 128 208 L 128 128 Z" fill="#FBBC05"/>  <!-- Jaune -->
+  <path d="M208 128 A 80 80 0 0 0 128 208 L 128 128 Z" fill="#34A853"/>  <!-- Vert -->
+
+  <!-- Symbole de vitesse (flèche) intégré au centre -->
+  <path d="M110 100 L 140 128 L 110 156 Z" fill="#FFFFFF"/>
+</svg>
