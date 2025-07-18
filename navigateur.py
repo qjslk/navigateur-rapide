@@ -2,7 +2,7 @@
 import sys
 import logging
 import os
-from PyQt6.QtCore import QUrl, QSize
+from PyQt6.QtCore import QUrl, QSize, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -10,8 +10,12 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QVBoxLayout,
+    QHBoxLayout,
     QWidget,
     QStatusBar,
+    QSplitter,
+    QFrame,
+    QLabel,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtGui import QIcon, QAction, QCloseEvent
@@ -73,6 +77,12 @@ class MainWindow(QMainWindow):
         home_btn.triggered.connect(self.navigate_home)
         nav_toolbar.addAction(home_btn)
 
+        # Bouton Sidebar
+        sidebar_btn = QAction(QIcon.fromTheme("view-list-details"), "Sidebar", self)
+        sidebar_btn.setStatusTip("Afficher/Masquer la sidebar")
+        sidebar_btn.triggered.connect(self.toggle_sidebar)
+        nav_toolbar.addAction(sidebar_btn)
+
         nav_toolbar.addSeparator()
 
         logging.info("Creation de la barre d'adresse")
@@ -88,8 +98,84 @@ class MainWindow(QMainWindow):
         # --- Barre de statut ---
         self.setStatusBar(QStatusBar(self))
         
+        logging.info("Creation de la sidebar")
+        # --- Sidebar ---
+        self.create_sidebar()
+        
+        # --- Layout principal avec splitter ---
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self.sidebar)
+        self.splitter.addWidget(self.browser)
+        
+        # Définir les tailles initiales (sidebar 200px, browser le reste)
+        self.splitter.setSizes([200, 1000])
+        
         # --- Affichage ---
-        self.setCentralWidget(self.browser)
+        self.setCentralWidget(self.splitter)
+
+    def create_sidebar(self):
+        """Crée la sidebar avec des boutons utiles."""
+        self.sidebar = QFrame()
+        self.sidebar.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.sidebar.setMaximumWidth(250)
+        self.sidebar.setMinimumWidth(150)
+        
+        layout = QVBoxLayout()
+        
+        # Titre de la sidebar
+        title = QLabel("Navigation Rapide")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px;")
+        layout.addWidget(title)
+        
+        # Boutons de navigation rapide
+        sites_populaires = [
+            ("🏠 Accueil", self.navigate_home),
+            ("🔍 Google", lambda: self.navigate_to_site("https://www.google.com")),
+            ("📺 YouTube", lambda: self.navigate_to_site("https://www.youtube.com")),
+            ("📧 Gmail", lambda: self.navigate_to_site("https://mail.google.com")),
+            ("💼 LinkedIn", lambda: self.navigate_to_site("https://www.linkedin.com")),
+            ("🐦 Twitter", lambda: self.navigate_to_site("https://twitter.com")),
+            ("📘 Facebook", lambda: self.navigate_to_site("https://www.facebook.com")),
+            ("📰 Actualités", lambda: self.navigate_to_site("https://news.google.com")),
+        ]
+        
+        for nom, action in sites_populaires:
+            btn = QPushButton(nom)
+            btn.clicked.connect(action)
+            btn.setStyleSheet("""
+                QPushButton {
+                    text-align: left;
+                    padding: 8px;
+                    margin: 2px;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    background-color: #f8f9fa;
+                }
+                QPushButton:hover {
+                    background-color: #e9ecef;
+                }
+                QPushButton:pressed {
+                    background-color: #dee2e6;
+                }
+            """)
+            layout.addWidget(btn)
+        
+        # Espaceur pour pousser les boutons vers le haut
+        layout.addStretch()
+        
+        self.sidebar.setLayout(layout)
+    
+    def navigate_to_site(self, url):
+        """Navigue vers un site spécifique."""
+        self.browser.setUrl(QUrl(url))
+        logging.info(f"Navigation vers : {url}")
+    
+    def toggle_sidebar(self):
+        """Affiche ou masque la sidebar."""
+        if self.sidebar.isVisible():
+            self.sidebar.hide()
+        else:
+            self.sidebar.show()
 
     def navigate_home(self):
         """Action pour le bouton Accueil."""
