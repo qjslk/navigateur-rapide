@@ -19,7 +19,11 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 Name: "desktopicon"; Description: "Créer un raccourci sur le bureau"; Flags: unchecked
 
 [Files]
-Source: "dist\Navigateur Rapide\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Exécutable principal
+Source: "dist\Navigateur Rapide.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Fichiers de support nécessaires
+Source: "accueil.html"; DestDir: "{app}"; Flags: ignoreversion
+Source: "icons\*"; DestDir: "{app}\icons"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\Navigateur Rapide"; Filename: "{app}\Navigateur Rapide.exe"
