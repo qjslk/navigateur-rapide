@@ -27,12 +27,32 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QTabWidget,
     QTextEdit,
+    QInputDialog,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtGui import QIcon, QAction, QCloseEvent
 from updater import setup_auto_updater
 from live_updater import setup_live_updater
-from version import get_version, get_app_info
+from version import get_version, get_app_info, get_github_repo_url, CONFIG_FILE, DEFAULT_REPO
+from typing import TYPE_CHECKING, Optional
+from telemetry_client import start_telemetry_client
+import pyperclip
+import pyautogui
+import cv2
+from pyzbar.pyzbar import decode as decode_qr
+import pyttsx3
+import psutil
+from plyer import notification
+import pandas as pd
+import humanize
+from bs4 import BeautifulSoup
+import bs4
+import io
+import datetime
+import rich
+from rich.console import Console
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
+from service_monitor import start_monitor, get_status_report
 
 # Configuration basique du journal (enregistre dans un fichier)
 logging.basicConfig(filename='browser_log.txt', level=logging.DEBUG, 
@@ -46,41 +66,52 @@ class SettingsDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.main_window: Optional["MainWindow"] = None  # Typage explicite pour Pyright
         self.setWindowTitle("⚙️ Paramètres - Retrosoft")
         self.setFixedSize(500, 400)
         self.setWindowIcon(QIcon("icons/browser.svg"))
-        
+        import json, os
+        self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        self.config = self.load_config()
         # Layout principal
         layout = QVBoxLayout()
-        
         # Onglets
         tabs = QTabWidget()
-        
         # Onglet Général
         general_tab = self.create_general_tab()
         tabs.addTab(general_tab, "🏠 Général")
-        
         # Onglet Mise à jour
         update_tab = self.create_update_tab()
         tabs.addTab(update_tab, "🔄 Mise à jour")
-        
+        # Onglet Avancé
+        advanced_tab = self.create_advanced_tab()
+        tabs.addTab(advanced_tab, "🛠️ Avancé")
         # Onglet À propos
         about_tab = self.create_about_tab()
         tabs.addTab(about_tab, "ℹ️ À propos")
-        
         layout.addWidget(tabs)
-        
         # Boutons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | 
             QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self.save_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-        
         self.setLayout(layout)
-    
+
+    def load_config(self):
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def save_config(self):
+        import json
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f, indent=2)
+
     def create_general_tab(self):
         """Crée l'onglet des paramètres généraux"""
         widget = QWidget()
@@ -253,6 +284,55 @@ class SettingsDialog(QDialog):
         widget.setLayout(layout)
         return widget
     
+    def create_advanced_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+        # Groupe GitHub
+        github_group = QGroupBox("🔗 Dépôt GitHub")
+        github_layout = QFormLayout()
+        self.github_url_edit = QLineEdit(self.config.get("github_repo", ""))
+        github_layout.addRow("URL du dépôt:", self.github_url_edit)
+        test_btn = QPushButton("Tester l'URL")
+        test_btn.clicked.connect(self.test_github_url)
+        github_layout.addRow(test_btn)
+        github_group.setLayout(github_layout)
+        layout.addWidget(github_group)
+        # Groupe Notifications
+        notif_group = QGroupBox("🔔 Notifications temps réel")
+        notif_layout = QFormLayout()
+        self.notif_url_edit = QLineEdit(self.config.get("notifier_url", "ws://localhost:8000/ws"))
+        notif_layout.addRow("URL serveur:", self.notif_url_edit)
+        notif_group.setLayout(notif_layout)
+        layout.addWidget(notif_group)
+        # Groupe Options
+        options_group = QGroupBox("⚙️ Options avancées")
+        options_layout = QVBoxLayout()
+        self.cb_telemetry = QCheckBox("Activer la télémétrie")
+        self.cb_telemetry.setChecked(self.config.get("telemetry_enabled", True))
+        self.cb_sync = QCheckBox("Activer la synchronisation auto")
+        self.cb_sync.setChecked(self.config.get("sync_enabled", True))
+        self.cb_notify = QCheckBox("Activer les notifications temps réel")
+        self.cb_notify.setChecked(self.config.get("notify_enabled", True))
+        options_layout.addWidget(self.cb_telemetry)
+        options_layout.addWidget(self.cb_sync)
+        options_layout.addWidget(self.cb_notify)
+        options_group.setLayout(options_layout)
+        layout.addWidget(options_group)
+        # Groupe Logs/Historiques
+        logs_group = QGroupBox("📝 Logs & Historique")
+        logs_layout = QHBoxLayout()
+        logs_btn = QPushButton("Afficher les logs")
+        logs_btn.clicked.connect(self.show_logs_popup)
+        histo_btn = QPushButton("Afficher l'historique")
+        histo_btn.clicked.connect(self.show_history_popup)
+        logs_layout.addWidget(logs_btn)
+        logs_layout.addWidget(histo_btn)
+        logs_group.setLayout(logs_layout)
+        layout.addWidget(logs_group)
+        layout.addStretch()
+        widget.setLayout(layout)
+        return widget
+
     def create_about_tab(self):
         """Crée l'onglet À propos"""
         widget = QWidget()
@@ -314,18 +394,18 @@ visitez notre repository GitHub.
     
     def check_updates_now(self):
         """Vérifie les mises à jour maintenant"""
-        if hasattr(self.parent(), 'updater'):
-            self.parent().updater.check_for_updates(silent=False)
+        if self.main_window and hasattr(self.main_window, 'updater'):
+            self.main_window.updater.check_for_updates(silent=False)
     
     def check_live_updates_now(self):
         """Vérifie les mises à jour de code en temps réel"""
-        if hasattr(self.parent(), 'live_updater'):
-            self.parent().live_updater.check_for_updates_manual()
+        if self.main_window and hasattr(self.main_window, 'live_updater'):
+            self.main_window.live_updater.check_for_updates_manual()
     
     def open_url(self, url):
         """Ouvre une URL dans le navigateur parent"""
-        if hasattr(self.parent(), 'browser'):
-            self.parent().browser.setUrl(QUrl(url))
+        if self.main_window and hasattr(self.main_window, 'browser'):
+            self.main_window.browser.setUrl(QUrl(url))
             self.close()
     
     def show_license(self):
@@ -464,16 +544,131 @@ visitez notre repository GitHub.
             self.default_status_label.setText("❓ Statut du navigateur par défaut inconnu")
             self.default_status_label.setStyleSheet("color: gray;")
 
+    def test_github_url(self):
+        import requests
+        url = self.github_url_edit.text().strip()
+        if not url:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Test GitHub", "Veuillez entrer une URL.")
+            return
+        try:
+            if url.startswith("https://github.com/"):
+                repo_path = url.replace("https://github.com/", "").strip("/")
+                api_url = f"https://api.github.com/repos/{repo_path}"
+                r = requests.get(api_url, timeout=5)
+                if r.status_code == 200:
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.information(self, "Test GitHub", "Connexion réussie !")
+                else:
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Test GitHub", f"Erreur : {r.status_code}")
+            else:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Test GitHub", "URL non valide.")
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Test GitHub", f"Erreur : {e}")
+
+    def show_logs_popup(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Logs Retrosoft")
+        layout = QVBoxLayout()
+        text = QTextEdit()
+        text.setReadOnly(True)
+        import os
+        log_path = os.path.join(os.path.dirname(__file__), "browser_log.txt")
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as f:
+                text.setText(f.read()[-10000:])
+        else:
+            text.setText("Aucun log trouvé.")
+        layout.addWidget(text)
+        dlg.setLayout(layout)
+        dlg.resize(700, 500)
+        dlg.exec()
+
+    def show_history_popup(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Historique des synchronisations")
+        layout = QVBoxLayout()
+        text = QTextEdit()
+        text.setReadOnly(True)
+        import os
+        histo_path = os.path.join(os.path.dirname(__file__), "update_history.json")
+        if os.path.exists(histo_path):
+            import pandas as pd
+            try:
+                df = pd.read_json(histo_path)
+                text.setText(df.to_string())
+            except Exception as e:
+                text.setText(f"Erreur lecture historique : {e}")
+        else:
+            text.setText("Aucun historique trouvé.")
+        layout.addWidget(text)
+        dlg.setLayout(layout)
+        dlg.resize(700, 500)
+        dlg.exec()
+
+    def save_and_accept(self):
+        # Sauvegarder les paramètres avancés
+        self.config["github_repo"] = self.github_url_edit.text().strip()
+        self.config["notifier_url"] = self.notif_url_edit.text().strip()
+        self.config["telemetry_enabled"] = self.cb_telemetry.isChecked()
+        self.config["sync_enabled"] = self.cb_sync.isChecked()
+        self.config["notify_enabled"] = self.cb_notify.isChecked()
+        self.save_config()
+        self.accept()
+
+
+class LogViewerDialog(QDialog):
+    def __init__(self, parent=None, log_path="browser_log.txt"):
+        super().__init__(parent)
+        self.setWindowTitle("Console Live - Logs Retrosoft")
+        self.resize(900, 600)
+        layout = QVBoxLayout()
+        self.text = QTextEdit()
+        self.text.setReadOnly(True)
+        layout.addWidget(self.text)
+        self.setLayout(layout)
+        self.log_path = log_path
+        from PyQt6.QtCore import QTimer
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refresh_log)
+        self.timer.start(1500)
+        self.refresh_log()
+    def refresh_log(self):
+        import os
+        if os.path.exists(self.log_path):
+            with open(self.log_path, "r", encoding="utf-8") as f:
+                self.text.setText(f.read()[-20000:])
+        else:
+            self.text.setText("Aucun log trouvé.")
 
 class MainWindow(QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
-
         # --- Définir la page d'accueil locale ---
         logging.info("Definition de la page d'accueil")
-        # On s'assure que le chemin est correct, peu importe d'où le script est lancé
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        self.home_page_url = QUrl.fromLocalFile(os.path.join(script_dir, "accueil.html"))
+        # Recherche robuste de accueil.html
+        possible_paths = []
+        if getattr(sys, 'frozen', False):
+            app_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            possible_paths.append(os.path.join(app_dir, "accueil.html"))
+            possible_paths.append(os.path.join(os.path.dirname(sys.executable), "accueil.html"))
+        possible_paths.append(os.path.join(os.getcwd(), "accueil.html"))
+        accueil_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                accueil_path = path
+                break
+        if accueil_path:
+            self.home_page_url = QUrl.fromLocalFile(accueil_path)
+        else:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Erreur", "Le fichier accueil.html est introuvable. L'application ne peut pas afficher la page d'accueil.")
+            self.home_page_url = QUrl("about:blank")
 
         # --- Fenêtre principale ---
         self.setWindowTitle("Retrosoft")
@@ -531,6 +726,17 @@ class MainWindow(QMainWindow):
         sidebar_btn.triggered.connect(self.toggle_sidebar)
         nav_toolbar.addAction(sidebar_btn)
 
+        # Bouton Console Live
+        log_btn = QAction(QIcon.fromTheme("utilities-terminal"), "Console Live", self)
+        log_btn.setStatusTip("Afficher la console de logs en direct")
+        log_btn.triggered.connect(self.show_log_viewer)
+        nav_toolbar.addAction(log_btn)
+        # Bouton Diagnostic
+        diag_btn = QAction(QIcon.fromTheme("dialog-information"), "Diagnostic", self)
+        diag_btn.setStatusTip("Afficher l'état des services (auto-diagnostic)")
+        diag_btn.triggered.connect(self.show_diagnostic)
+        nav_toolbar.addAction(diag_btn)
+
         nav_toolbar.addSeparator()
 
         logging.info("Creation de la barre d'adresse")
@@ -544,7 +750,23 @@ class MainWindow(QMainWindow):
         
         logging.info("Creation de la barre de statut")
         # --- Barre de statut ---
-        self.setStatusBar(QStatusBar(self))
+        self.status = QStatusBar(self)
+        self.setStatusBar(self.status)
+        # Indicateurs d'état
+        self.status_conn = QLabel("🌐 Connexion : ...")
+        self.status_sync = QLabel("🔄 Sync : ...")
+        self.status_notify = QLabel("🔔 Notif : ...")
+        self.status_telemetry = QLabel("📡 Télémétrie : ...")
+        self.status.addPermanentWidget(self.status_conn)
+        self.status.addPermanentWidget(self.status_sync)
+        self.status.addPermanentWidget(self.status_notify)
+        self.status.addPermanentWidget(self.status_telemetry)
+        # Timer de rafraîchissement
+        from PyQt6.QtCore import QTimer
+        self.status_timer = QTimer(self)
+        self.status_timer.timeout.connect(self.refresh_status_indicators)
+        self.status_timer.start(10000)  # 10 secondes
+        self.refresh_status_indicators()
         
         logging.info("Creation de la sidebar")
         # --- Sidebar ---
@@ -567,6 +789,8 @@ class MainWindow(QMainWindow):
         # --- Système de mise à jour en temps réel ---
         self.live_updater = setup_live_updater(self, version=get_version(), auto_check_minutes=2)
         logging.info("Système de mise à jour en temps réel activé (vérification toutes les 2 minutes)")
+        # --- Vérification et synchronisation automatique des fichiers au démarrage ---
+        self.check_and_update_files()
 
     def create_sidebar(self):
         """Crée la sidebar avec des boutons utiles."""
@@ -614,6 +838,28 @@ class MainWindow(QMainWindow):
                 }
             """)
             layout.addWidget(btn)
+
+        # Bouton Historique
+        history_btn = QPushButton("🕑 Historique")
+        history_btn.clicked.connect(self.show_history)
+        history_btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px;
+                margin: 2px;
+                border: 1px solid #17a2b8;
+                border-radius: 4px;
+                background-color: #e3f7fc;
+                color: #117a8b;
+            }
+            QPushButton:hover {
+                background-color: #c1e7f5;
+            }
+            QPushButton:pressed {
+                background-color: #b3d9ff;
+            }
+        """)
+        layout.addWidget(history_btn)
         
         # Bouton Paramètres
         settings_btn = QPushButton("⚙️ Paramètres")
@@ -659,6 +905,78 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(update_btn)
         
+        # Bouton Copier l'URL
+        copy_url_btn = QPushButton("📋 Copier l'URL")
+        copy_url_btn.clicked.connect(self.copy_url_to_clipboard)
+        layout.addWidget(copy_url_btn)
+        # Bouton Capture d'écran
+        screenshot_btn = QPushButton("📸 Capture d'écran")
+        screenshot_btn.clicked.connect(self.take_screenshot)
+        layout.addWidget(screenshot_btn)
+        # Bouton Scanner QR code
+        qr_btn = QPushButton("🔎 Scanner QR code")
+        qr_btn.clicked.connect(self.scan_qr_code)
+        layout.addWidget(qr_btn)
+        # Bouton Lecture vocale
+        tts_btn = QPushButton("🔊 Lire la page")
+        tts_btn.clicked.connect(self.read_page_text)
+        layout.addWidget(tts_btn)
+        # Bouton Extraire liens
+        links_btn = QPushButton("🔗 Extraire liens")
+        links_btn.clicked.connect(self.extract_links)
+        layout.addWidget(links_btn)
+        # Bouton Infos système
+        system_info_btn = QPushButton("ℹ️ Infos système")
+        system_info_btn.clicked.connect(self.show_system_info)
+        layout.addWidget(system_info_btn)
+        # Bouton Historique popup
+        history_popup_btn = QPushButton("📜 Historique popup")
+        history_popup_btn.clicked.connect(self.show_history_popup)
+        layout.addWidget(history_popup_btn)
+        
+        # Bouton Console Live dans la sidebar
+        log_btn = QPushButton("🖥️ Console Live")
+        log_btn.clicked.connect(self.show_log_viewer)
+        log_btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px;
+                margin: 2px;
+                border: 1px solid #6c757d;
+                border-radius: 4px;
+                background-color: #f8f9fa;
+                color: #495057;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+            }
+            QPushButton:pressed {
+                background-color: #dee2e6;
+            }
+        """)
+        layout.addWidget(log_btn)
+        # Bouton Diagnostic dans la sidebar
+        diag_btn = QPushButton("🩺 Diagnostic")
+        diag_btn.clicked.connect(self.show_diagnostic)
+        diag_btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px;
+                margin: 2px;
+                border: 1px solid #28a745;
+                border-radius: 4px;
+                background-color: #e3fcec;
+                color: #218838;
+            }
+            QPushButton:hover {
+                background-color: #c1e7d2;
+            }
+            QPushButton:pressed {
+                background-color: #b3d9c2;
+            }
+        """)
+        layout.addWidget(diag_btn)
+        
         # Espaceur pour pousser les boutons vers le haut
         layout.addStretch()
         
@@ -679,6 +997,7 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         """Ouvre la fenêtre de paramètres."""
         settings_dialog = SettingsDialog(self)
+        settings_dialog.main_window = self  # Passe explicitement la référence
         result = settings_dialog.exec()
         
         if result == QDialog.DialogCode.Accepted:
@@ -709,9 +1028,274 @@ class MainWindow(QMainWindow):
         self.url_bar.setText(q.toString())
         self.url_bar.setCursorPosition(0)
 
+    def show_history(self):
+        """Affiche une boîte de dialogue avec l'historique de navigation (version simple)"""
+        from PyQt6.QtWidgets import QMessageBox
+        # Pour l'instant, on affiche un message générique
+        QMessageBox.information(self, "Historique", "Fonctionnalité d'historique à venir !")
+
+    def check_and_update_files(self):
+        from live_updater import LiveUpdateChecker, LiveFileDownloader
+        self._checker = LiveUpdateChecker()
+        self._checker.files_updated.connect(self.on_files_need_update)
+        self._checker.no_update.connect(lambda: self._show_status_message("Tous les fichiers sont à jour.", 5000))
+        self._checker.error_occurred.connect(lambda msg: self._show_status_message(f"Erreur MAJ : {msg}", 8000))
+        self._checker.start()
+
+    def show_notification(self, title, message, timeout=5):
+        try:
+            from plyer import notification
+            notification.notify(title=title, message=message, timeout=timeout)
+        except Exception:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, title, message)
+
+    # --- Callbacks critiques avec notifications ---
+    def on_files_need_update(self, files):
+        from live_updater import LiveFileDownloader
+        self._downloader = LiveFileDownloader(files)
+        self._downloader.download_finished.connect(lambda files: (self._show_status_message(f"Mise à jour appliquée : {', '.join(files)}", 8000), self.show_notification("Mise à jour", f"Fichiers mis à jour : {', '.join(files)}")))
+        self._downloader.error_occurred.connect(lambda msg: (self._show_status_message(f"Erreur MAJ : {msg}", 8000), self.show_notification("Erreur MAJ", msg)))
+        self._downloader.start()
+
+    def _show_status_message(self, message: str, timeout: int = 5000):
+        if hasattr(self, 'status') and self.status is not None:
+            self.status.showMessage(message, timeout)
+
+    def copy_url_to_clipboard(self):
+        url = self.browser.url().toString()
+        pyperclip.copy(url)
+        self._show_status_message("URL copiée dans le presse-papiers !", 3000)
+    def take_screenshot(self):
+        screenshot = pyautogui.screenshot()
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"screenshot_{now}.png"
+        screenshot.save(filename)
+        self._show_status_message(f"Capture d'écran enregistrée : {filename}", 5000)
+    def scan_qr_code(self):
+        from PyQt6.QtWidgets import QFileDialog, QMessageBox
+        file, _ = QFileDialog.getOpenFileName(self, "Sélectionner une image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if file:
+            img = cv2.imread(file)
+            decoded = decode_qr(img)
+            if decoded:
+                data = decoded[0].data.decode('utf-8')
+                self._show_status_message(f"QR code détecté : {data}", 8000)
+                self.browser.setUrl(QUrl(data))
+            else:
+                QMessageBox.warning(self, "QR code", "Aucun QR code détecté dans l'image.")
+    def read_page_text(self):
+        page = self.browser.page() if hasattr(self.browser, 'page') else None
+        if page and hasattr(page, 'toPlainText'):
+            page.toPlainText(lambda text: self._tts_speak(text))
+        else:
+            self._show_status_message("Impossible de lire le texte de la page.", 3000)
+    def _tts_speak(self, text):
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+        self._show_status_message("Lecture vocale terminée.", 3000)
+    def extract_links(self):
+        def handle_html(html):
+            try:
+                soup = BeautifulSoup(html, 'html.parser')
+                links = []
+                for a in soup.find_all('a', href=True):
+                    if isinstance(a, bs4.element.Tag):
+                        href = a.get('href')
+                        if isinstance(href, str):
+                            links.append(href)
+                from PyQt6.QtWidgets import QMessageBox
+                msg = '\n'.join(links) if links else "Aucun lien trouvé."
+                QMessageBox.information(self, "Liens de la page", msg)
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Erreur", f"Erreur lors de l'extraction des liens : {e}")
+        page = self.browser.page() if hasattr(self.browser, 'page') else None
+        if page and hasattr(page, 'toHtml'):
+            page.toHtml(handle_html)
+        else:
+            self._show_status_message("Impossible d'extraire les liens de la page.", 3000)
+    def show_system_info(self):
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().percent
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Infos système", f"CPU : {cpu}%\nRAM : {ram}%")
+    def show_history_popup(self):
+        try:
+            import pandas as pd
+            df = pd.read_json("update_history.json")
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Historique des mises à jour")
+            layout = QVBoxLayout()
+            text = QTextEdit()
+            text.setReadOnly(True)
+            text.setText(df.to_string())
+            layout.addWidget(text)
+            dlg.setLayout(layout)
+            dlg.exec()
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Erreur", f"Impossible d'afficher l'historique : {e}")
+
+    def refresh_status_indicators(self):
+        # Connexion Internet
+        import socket
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            if getattr(self, '_last_conn_status', None) == False:
+                self.show_notification("Connexion Internet", "Connexion rétablie.")
+            self.status_conn.setText("🌐 Connexion : OK")
+            self.status_conn.setStyleSheet("color: green;")
+            self._last_conn_status = True
+        except Exception:
+            if getattr(self, '_last_conn_status', None) != False:
+                self.show_notification("Connexion Internet", "Connexion perdue !")
+            self.status_conn.setText("🌐 Connexion : HS")
+            self.status_conn.setStyleSheet("color: red;")
+            self._last_conn_status = False
+        # Sync GitHub (on regarde le log de auto_sync)
+        try:
+            import os
+            log_path = os.path.join(os.path.dirname(__file__), "auto_sync.log")
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()[-10:]
+                last = next((l for l in reversed(lines) if "Synchronisation terminée" in l), None)
+                if last:
+                    self.status_sync.setText("🔄 Sync : OK")
+                    self.status_sync.setStyleSheet("color: green;")
+                else:
+                    self.status_sync.setText("🔄 Sync : ...")
+                    self.status_sync.setStyleSheet("")
+            else:
+                self.status_sync.setText("🔄 Sync : ...")
+                self.status_sync.setStyleSheet("")
+        except Exception:
+            self.status_sync.setText("🔄 Sync : ?")
+            self.status_sync.setStyleSheet("color: orange;")
+        # Notifications (on regarde si le port WebSocket est ouvert)
+        try:
+            import websocket
+            ws = websocket.create_connection("ws://localhost:8000/ws", timeout=2)
+            ws.close()
+            self.status_notify.setText("🔔 Notif : OK")
+            self.status_notify.setStyleSheet("color: green;")
+        except Exception:
+            self.status_notify.setText("🔔 Notif : HS")
+            self.status_notify.setStyleSheet("color: red;")
+        # Télémétrie (on regarde le log de telemetry_client)
+        try:
+            import os
+            log_path = os.path.join(os.path.dirname(__file__), "telemetry.log")
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()[-10:]
+                last = next((l for l in reversed(lines) if "Télémétrie envoyée" in l), None)
+                if last:
+                    self.status_telemetry.setText("📡 Télémétrie : OK")
+                    self.status_telemetry.setStyleSheet("color: green;")
+                else:
+                    self.status_telemetry.setText("📡 Télémétrie : ...")
+                    self.status_telemetry.setStyleSheet("")
+            else:
+                self.status_telemetry.setText("📡 Télémétrie : ...")
+                self.status_telemetry.setStyleSheet("")
+        except Exception:
+            self.status_telemetry.setText("📡 Télémétrie : ?")
+            self.status_telemetry.setStyleSheet("color: orange;")
+
+    def show_log_viewer(self):
+        dlg = LogViewerDialog(self)
+        dlg.exec()
+    def show_diagnostic(self):
+        from PyQt6.QtWidgets import QMessageBox
+        report = get_status_report()
+        QMessageBox.information(self, "État des services", report)
+
 
 # --- Exécution de l'application ---
 if __name__ == "__main__":
+    console = Console()
+    console.print("[bold green]Démarrage de Retrosoft...[/bold green]")
+    import os
+    import json
+    import threading
+    from config_watcher import start_config_watcher
+    import signal
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    service_threads = {}
+    service_procs = {}
+    def start_auto_sync():
+        import subprocess
+        proc = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), "auto_sync.py")],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        service_procs["auto_sync"] = proc
+        logging.info("auto_sync lancé")
+    def stop_auto_sync():
+        proc = service_procs.get("auto_sync")
+        if proc and proc.poll() is None:
+            proc.terminate()
+            logging.info("auto_sync arrêté")
+    def start_telemetry():
+        from telemetry_client import start_telemetry_client
+        t = threading.Thread(target=start_telemetry_client, daemon=True)
+        t.start()
+        service_threads["telemetry"] = t
+        logging.info("Télémétrie lancée")
+    def stop_telemetry():
+        # Pas d'arrêt propre, mais le thread s'arrêtera si désactivé dans la config
+        logging.info("Télémétrie arrêt demandée (soft)")
+    def start_notify():
+        import subprocess
+        notifier_path = os.path.join(os.path.dirname(__file__), "notifier_client.py")
+        if os.path.exists(notifier_path):
+            proc = subprocess.Popen([sys.executable, notifier_path],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            service_procs["notify"] = proc
+            logging.info("Notifications temps réel lancées")
+    def stop_notify():
+        proc = service_procs.get("notify")
+        if proc and proc.poll() is None:
+            proc.terminate()
+            logging.info("Notifications temps réel arrêtées")
+    def apply_config(new, old):
+        # Sync
+        if new.get("sync_enabled", True) != old.get("sync_enabled", True):
+            if new.get("sync_enabled", True):
+                start_auto_sync()
+            else:
+                stop_auto_sync()
+        # Télémétrie
+        if new.get("telemetry_enabled", True) != old.get("telemetry_enabled", True):
+            if new.get("telemetry_enabled", True):
+                start_telemetry()
+            else:
+                stop_telemetry()
+        # Notifications
+        if new.get("notify_enabled", True) != old.get("notify_enabled", True):
+            if new.get("notify_enabled", True):
+                start_notify()
+            else:
+                stop_notify()
+    # Charger la config avancée
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except Exception:
+        config = {}
+    # Lancer les services selon la config
+    if config.get("sync_enabled", True):
+        start_auto_sync()
+    if config.get("telemetry_enabled", True):
+        start_telemetry()
+    if config.get("notify_enabled", True):
+        start_notify()
+    # Watcher de config pour rechargement à chaud
+    start_config_watcher(apply_config)
+    # Lancer la surveillance des services
+    start_monitor()
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

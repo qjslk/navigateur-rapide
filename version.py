@@ -2,7 +2,11 @@
 Informations de version pour Retrosoft
 """
 
-__version__ = "1.2.0"
+import os
+import json
+from PyQt6.QtWidgets import QInputDialog, QApplication
+
+__version__ = "2.0.0"
 __app_name__ = "Retrosoft"
 __description__ = "Navigateur web rapide avec sidebar et mise à jour automatique"
 __author__ = "Votre nom"
@@ -30,8 +34,18 @@ VERSION_HISTORY = {
         "🔗 Support des URLs passées en argument (liens externes)",
         "✅ Statut du navigateur par défaut affiché en temps réel",
         "🖥️ Nouveau groupe 'Système' dans les paramètres"
+    ],
+    "2.0.0": [
+        "🚀 Synchronisation dynamique avec n'importe quel dépôt GitHub public",
+        "🔔 Mises à jour automatiques en temps réel via WebSocket",
+        "🛡️ Plus besoin de clé API, sécurité renforcée",
+        "🖥️ Fenêtre de configuration du dépôt au premier lancement",
+        "⚡ Robustesse et rapidité accrues"
     ]
 }
+
+CONFIG_FILE = "config.json"
+DEFAULT_REPO = "https://github.com/qjslk/navigateur-rapide"
 
 def get_version():
     """Retourne la version actuelle"""
@@ -46,3 +60,24 @@ def get_app_info():
         "author": __author__,
         "repo": __github_repo__
     }
+
+def get_github_repo_url():
+    """Retourne l'URL du dépôt GitHub à utiliser (demande à l'utilisateur au premier lancement)"""
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            return config.get("github_repo", DEFAULT_REPO)
+    # Demande à l'utilisateur au premier lancement
+    app = QApplication.instance() or QApplication([])
+    repo_url, ok = QInputDialog.getText(
+        None,
+        "Configuration du dépôt GitHub",
+        "Entrez l'URL du dépôt GitHub à synchroniser :",
+        text=DEFAULT_REPO
+    )
+    if ok and repo_url:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump({"github_repo": repo_url}, f)
+        return repo_url
+    else:
+        return DEFAULT_REPO

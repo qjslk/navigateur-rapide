@@ -14,6 +14,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 import logging
+from version import get_github_repo_url
 
 class LiveUpdateChecker(QThread):
     """Thread pour vérifier les mises à jour de code en temps réel"""
@@ -25,7 +26,13 @@ class LiveUpdateChecker(QThread):
     def __init__(self, current_version="1.0.0"):
         super().__init__()
         self.current_version = current_version
-        self.github_repo = "qjslk/navigateur-rapide"
+        repo_url = get_github_repo_url()
+        # Extraire le chemin "owner/repo" depuis l'URL
+        if repo_url.startswith("https://github.com/"):
+            repo_path = repo_url.replace("https://github.com/", "").strip("/")
+        else:
+            repo_path = "qjslk/navigateur-rapide"  # fallback
+        self.github_repo = repo_path
         self.github_api_url = f"https://api.github.com/repos/{self.github_repo}"
         self.files_to_monitor = [
             "navigateur.py",
@@ -88,7 +95,12 @@ class LiveFileDownloader(QThread):
     def __init__(self, files_to_download):
         super().__init__()
         self.files_to_download = files_to_download
-        self.github_repo = "qjslk/navigateur-rapide"
+        repo_url = get_github_repo_url()
+        if repo_url.startswith("https://github.com/"):
+            repo_path = repo_url.replace("https://github.com/", "").strip("/")
+        else:
+            repo_path = "qjslk/navigateur-rapide"
+        self.github_repo = repo_path
         self.github_raw_url = f"https://raw.githubusercontent.com/{self.github_repo}/main"
         
     def run(self):

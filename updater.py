@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from version import get_github_repo_url
 
 class UpdateChecker(QThread):
     """Thread pour vérifier les mises à jour sans bloquer l'interface"""
@@ -24,7 +25,12 @@ class UpdateChecker(QThread):
     def __init__(self, current_version="1.0.0"):
         super().__init__()
         self.current_version = current_version
-        self.github_repo = "qjslk/navigateur-rapide"
+        repo_url = get_github_repo_url()
+        if repo_url.startswith("https://github.com/"):
+            repo_path = repo_url.replace("https://github.com/", "").strip("/")
+        else:
+            repo_path = "qjslk/navigateur-rapide"
+        self.github_repo = repo_path
         
     def run(self):
         """Vérifier s'il y a une nouvelle version sur GitHub"""
