@@ -19,6 +19,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtGui import QIcon, QAction, QCloseEvent
+from updater import setup_auto_updater
+from version import get_version, get_app_info
 
 # Configuration basique du journal (enregistre dans un fichier)
 logging.basicConfig(filename='browser_log.txt', level=logging.DEBUG, 
@@ -112,6 +114,9 @@ class MainWindow(QMainWindow):
         
         # --- Affichage ---
         self.setCentralWidget(self.splitter)
+        
+        # --- Système de mise à jour automatique ---
+        self.updater = setup_auto_updater(self, version=get_version())
 
     def create_sidebar(self):
         """Crée la sidebar avec des boutons utiles."""
@@ -159,6 +164,28 @@ class MainWindow(QMainWindow):
                 }
             """)
             layout.addWidget(btn)
+        
+        # Bouton de mise à jour
+        update_btn = QPushButton("🔄 Vérifier les mises à jour")
+        update_btn.clicked.connect(lambda: self.updater.check_for_updates(silent=False))
+        update_btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 8px;
+                margin: 2px;
+                border: 1px solid #007bff;
+                border-radius: 4px;
+                background-color: #e7f3ff;
+                color: #0056b3;
+            }
+            QPushButton:hover {
+                background-color: #cce7ff;
+            }
+            QPushButton:pressed {
+                background-color: #b3d9ff;
+            }
+        """)
+        layout.addWidget(update_btn)
         
         # Espaceur pour pousser les boutons vers le haut
         layout.addStretch()
