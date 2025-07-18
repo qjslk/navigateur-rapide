@@ -55,3 +55,6 @@ build/
 # Fichiers temporaires
 *.tmp
 *.temp
+
+# Fichiers exécutables (trop volumineux pour GitHub)
+*.exe
