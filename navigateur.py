@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
         self.home_page_url = QUrl.fromLocalFile(os.path.join(script_dir, "accueil.html"))
 
         # --- Fenêtre principale ---
-        self.setWindowTitle("Navigateur Rapide")
+        self.setWindowTitle("Retrosoft")
         self.setWindowIcon(QIcon("icons/browser.svg")) # On utilise notre nouvelle icône SVG
         self.resize(1200, 800)
 
@@ -123,7 +123,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         
         # Titre de la sidebar
-        title = QLabel("Navigation Rapide")
+        title = QLabel("Retrosoft")
         title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px;")
         layout.addWidget(title)
         

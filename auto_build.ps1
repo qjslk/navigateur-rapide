@@ -13,7 +13,7 @@ function Invoke-AppBuild {
     if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
     
     # Rebuild avec PyInstaller
-    python -m PyInstaller "Navigateur Rapide.spec" --clean
+    python -m PyInstaller "Retrosoft.spec" --clean
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✅ Build réussi!"
