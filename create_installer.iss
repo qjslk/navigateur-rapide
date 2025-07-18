@@ -3,11 +3,11 @@
 [Setup]
 AppId={{A8E58742-0544-4E87-A1BF-3453372B28B4}}
 AppName=Navigateur Rapide
-AppVersion=1.0
+AppVersion=1.1.0
 AppPublisher=Matteo
 DefaultDirName={autopf}\NavigateurRapide
 OutputDir=.
-OutputBaseFilename=NavigateurRapide-Setup
+OutputBaseFilename=NavigateurRapide-Setup-v1.1.0
 Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=lowest

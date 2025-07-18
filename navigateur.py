@@ -2,6 +2,8 @@
 import sys
 import logging
 import os
+import subprocess
+import winreg
 from PyQt6.QtCore import QUrl, QSize, Qt
 from PyQt6.QtWidgets import (
     QApplication,
@@ -29,6 +31,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtGui import QIcon, QAction, QCloseEvent
 from updater import setup_auto_updater
+from live_updater import setup_live_updater
 from version import get_version, get_app_info
 
 # Configuration basique du journal (enregistre dans un fichier)
@@ -134,6 +137,39 @@ class SettingsDialog(QDialog):
         ui_group.setLayout(ui_layout)
         layout.addWidget(ui_group)
         
+        # Groupe Système
+        system_group = QGroupBox("🖥️ Système")
+        system_layout = QVBoxLayout()
+        
+        # Bouton pour définir comme navigateur par défaut
+        default_browser_btn = QPushButton("🌐 Définir comme navigateur par défaut")
+        default_browser_btn.clicked.connect(self.set_as_default_browser)
+        default_browser_btn.setStyleSheet("""
+            QPushButton {
+                padding: 10px;
+                background-color: #007bff;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+            QPushButton:pressed {
+                background-color: #004085;
+            }
+        """)
+        system_layout.addWidget(default_browser_btn)
+        
+        # Statut du navigateur par défaut
+        self.default_status_label = QLabel()
+        self.update_default_browser_status()
+        system_layout.addWidget(self.default_status_label)
+        
+        system_group.setLayout(system_layout)
+        layout.addWidget(system_group)
+        
         layout.addStretch()
         widget.setLayout(layout)
         return widget
@@ -185,10 +221,30 @@ class SettingsDialog(QDialog):
         version_label.setWordWrap(True)
         version_layout.addWidget(version_label)
         
-        # Bouton vérifier maintenant
+        # Boutons de vérification
+        buttons_layout = QHBoxLayout()
+        
         check_now_btn = QPushButton("🔍 Vérifier maintenant")
         check_now_btn.clicked.connect(self.check_updates_now)
-        version_layout.addWidget(check_now_btn)
+        buttons_layout.addWidget(check_now_btn)
+        
+        live_check_btn = QPushButton("⚡ Vérifier mises à jour code")
+        live_check_btn.clicked.connect(self.check_live_updates_now)
+        live_check_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+        buttons_layout.addWidget(live_check_btn)
+        
+        version_layout.addLayout(buttons_layout)
         
         version_group.setLayout(version_layout)
         layout.addWidget(version_group)
@@ -261,6 +317,11 @@ visitez notre repository GitHub.
         if hasattr(self.parent(), 'updater'):
             self.parent().updater.check_for_updates(silent=False)
     
+    def check_live_updates_now(self):
+        """Vérifie les mises à jour de code en temps réel"""
+        if hasattr(self.parent(), 'live_updater'):
+            self.parent().live_updater.check_for_updates_manual()
+    
     def open_url(self, url):
         """Ouvre une URL dans le navigateur parent"""
         if hasattr(self.parent(), 'browser'):
@@ -277,6 +338,131 @@ visitez notre repository GitHub.
             "Vous êtes libre d'utiliser, modifier et distribuer\n"
             "ce logiciel selon les termes de cette licence."
         )
+    
+    def set_as_default_browser(self):
+        """Définit Retrosoft comme navigateur par défaut"""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        # D'abord, enregistrer Retrosoft comme navigateur
+        success = self.register_as_browser()
+        
+        if success:
+            try:
+                # Ouvre les paramètres Windows pour choisir les applications par défaut
+                subprocess.run(['ms-settings:defaultapps'], shell=True)
+                
+                QMessageBox.information(
+                    self,
+                    "Navigateur par défaut",
+                    "✅ Retrosoft a été enregistré comme navigateur !\n\n"
+                    "Les paramètres Windows se sont ouverts.\n"
+                    "Pour définir Retrosoft comme navigateur par défaut :\n\n"
+                    "1. Cliquez sur 'Navigateur web'\n"
+                    "2. Sélectionnez 'Retrosoft' dans la liste\n"
+                    "3. Fermez les paramètres"
+                )
+                
+            except Exception as e:
+                # Méthode alternative : ouvrir directement les associations de fichiers
+                try:
+                    subprocess.run(['control', '/name', 'Microsoft.DefaultPrograms', '/page', 'pageDefaultProgram'], shell=True)
+                    QMessageBox.information(
+                        self,
+                        "Navigateur par défaut",
+                        "✅ Retrosoft a été enregistré comme navigateur !\n\n"
+                        "Les paramètres de programmes par défaut se sont ouverts.\n"
+                        "Sélectionnez Retrosoft et cliquez sur 'Définir ce programme comme programme par défaut'."
+                    )
+                except Exception as e2:
+                    QMessageBox.information(
+                        self,
+                        "Navigateur enregistré",
+                        "✅ Retrosoft a été enregistré comme navigateur !\n\n"
+                        "Vous pouvez maintenant le définir comme navigateur par défaut dans :\n"
+                        "Paramètres Windows > Applications > Applications par défaut > Navigateur web"
+                    )
+        else:
+            QMessageBox.warning(
+                self,
+                "Erreur",
+                "❌ Impossible d'enregistrer Retrosoft comme navigateur.\n\n"
+                "Essayez de lancer l'application en tant qu'administrateur."
+            )
+        
+        # Mettre à jour le statut après un délai
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(3000, self.update_default_browser_status)
+    
+    def register_as_browser(self):
+        """Enregistre Retrosoft comme navigateur dans le registre Windows"""
+        try:
+            # Chemin vers l'exécutable
+            if getattr(sys, 'frozen', False):
+                # Si l'application est compilée avec PyInstaller
+                exe_path = sys.executable
+            else:
+                # Si on exécute le script Python
+                exe_path = os.path.abspath(__file__)
+            
+            app_name = "Retrosoft"
+            app_description = "Navigateur web rapide et moderne"
+            prog_id = f"{app_name}.HTML"
+            
+            # 1. Enregistrer l'application
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\{app_name}") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, app_description)
+                winreg.SetValueEx(key, "Path", 0, winreg.REG_SZ, exe_path)
+            
+            # 2. Enregistrer comme navigateur web dans la liste des clients
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Clients\\StartMenuInternet\\{app_name}") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, app_name)
+            
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Clients\\StartMenuInternet\\{app_name}\\Capabilities") as key:
+                winreg.SetValueEx(key, "ApplicationName", 0, winreg.REG_SZ, app_name)
+                winreg.SetValueEx(key, "ApplicationDescription", 0, winreg.REG_SZ, app_description)
+            
+            # Associations d'URL
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Clients\\StartMenuInternet\\{app_name}\\Capabilities\\URLAssociations") as key:
+                winreg.SetValueEx(key, "http", 0, winreg.REG_SZ, f"{app_name}URL")
+                winreg.SetValueEx(key, "https", 0, winreg.REG_SZ, f"{app_name}URL")
+            
+            # Commande par défaut
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Clients\\StartMenuInternet\\{app_name}\\shell\\open\\command") as key:
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, f'"{exe_path}"')
+            
+            # 3. Créer les associations pour les protocoles
+            for protocol in ["http", "https"]:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\{app_name}URL") as key:
+                    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, f"{app_name} URL")
+                    winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+                
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\{app_name}URL\\shell\\open\\command") as key:
+                    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, f'"{exe_path}" "%1"')
+            
+            logging.info("Retrosoft enregistré comme navigateur web")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Erreur lors de l'enregistrement du navigateur : {e}")
+            return False
+    
+    def update_default_browser_status(self):
+        """Met à jour le statut du navigateur par défaut"""
+        try:
+            # Vérifier si Retrosoft est le navigateur par défaut
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as key:
+                prog_id = winreg.QueryValueEx(key, "ProgId")[0]
+                
+            if "Retrosoft" in prog_id or "NavigateurRapide" in prog_id:
+                self.default_status_label.setText("✅ Retrosoft est votre navigateur par défaut")
+                self.default_status_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.default_status_label.setText("❌ Retrosoft n'est pas votre navigateur par défaut")
+                self.default_status_label.setStyleSheet("color: orange; font-weight: bold;")
+                
+        except Exception:
+            self.default_status_label.setText("❓ Statut du navigateur par défaut inconnu")
+            self.default_status_label.setStyleSheet("color: gray;")
 
 
 class MainWindow(QMainWindow):
@@ -297,7 +483,17 @@ class MainWindow(QMainWindow):
         logging.info("Creation de la vue web")
         # --- Vue Web ---
         self.browser = QWebEngineView()
-        self.browser.setUrl(self.home_page_url)
+        
+        # Vérifier si une URL a été passée en argument
+        if len(sys.argv) > 1:
+            url_arg = sys.argv[1]
+            if url_arg.startswith(('http://', 'https://')):
+                self.browser.setUrl(QUrl(url_arg))
+                logging.info(f"URL passée en argument : {url_arg}")
+            else:
+                self.browser.setUrl(self.home_page_url)
+        else:
+            self.browser.setUrl(self.home_page_url)
 
         logging.info("Creation de la barre d'outils")
         # --- Barre d'outils de navigation ---
@@ -367,6 +563,10 @@ class MainWindow(QMainWindow):
         
         # --- Système de mise à jour automatique ---
         self.updater = setup_auto_updater(self, version=get_version())
+        
+        # --- Système de mise à jour en temps réel ---
+        self.live_updater = setup_live_updater(self, version=get_version(), auto_check_minutes=2)
+        logging.info("Système de mise à jour en temps réel activé (vérification toutes les 2 minutes)")
 
     def create_sidebar(self):
         """Crée la sidebar avec des boutons utiles."""

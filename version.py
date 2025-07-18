@@ -2,7 +2,7 @@
 Informations de version pour Retrosoft
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __app_name__ = "Retrosoft"
 __description__ = "Navigateur web rapide avec sidebar et mise à jour automatique"
 __author__ = "Votre nom"
@@ -23,6 +23,13 @@ VERSION_HISTORY = {
         "🔧 Configuration de la page d'accueil et moteur de recherche",
         "📋 Informations détaillées sur l'application",
         "🔍 Bouton 'Vérifier maintenant' pour les mises à jour"
+    ],
+    "1.2.0": [
+        "🌐 Bouton 'Définir comme navigateur par défaut' dans les paramètres",
+        "📝 Enregistrement automatique de Retrosoft comme navigateur web",
+        "🔗 Support des URLs passées en argument (liens externes)",
+        "✅ Statut du navigateur par défaut affiché en temps réel",
+        "🖥️ Nouveau groupe 'Système' dans les paramètres"
     ]
 }
 
